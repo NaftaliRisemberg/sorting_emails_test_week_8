@@ -1,0 +1,120 @@
+version: '3.8'
+services:
+  zookeeper:
+    image: wurstmeister/zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    networks:
+      - app_network
+
+  kafka:
+    image: wurstmeister/kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_HOST_NAME: kafka
+      KAFKA_CREATE_TOPICS: "all_message:3:1, hostage_message:3:1, explos_message:3:1"
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: [ "CMD", "kafka-topics.sh", "--list", "--zookeeper", "zookeeper:2181" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+
+  mongodb:
+    image: mongo:4.4
+    container_name: mongodb
+    restart: always
+    environment:
+      mongo_initdb_root_username: admin
+      mongo_initdb_root_password: 1234
+      mongo_auth: "true"
+      mongo_initdb_database: emails
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongo-data-4-4:/data/db
+    healthcheck:
+      test: [ "CMD", "mongo", "--eval", "db.adminCommand('ping')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+
+  db_psql:
+    image: postgres
+    container_name: db_psql
+    restart: always
+    volumes:
+      - ./postgers-data-4-4:/data/db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: 1234
+    ports:
+        - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d emails -h localhost -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+
+  stream_processor:
+    build: ./stream_processor
+    container_name: stream_processor
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=development
+    networks:
+      - app_network
+
+  consumer_explos:
+    build: ./consumer_explos
+    container_name: consumer_explos
+    depends_on:
+      kafka:
+        condition: service_healthy
+      db_psql:
+        condition: service_healthy
+    networks:
+      - app_network
+
+  consumer_hostage:
+    build: ./consumer_hostage
+    container_name: consumer_hostage
+    depends_on:
+      kafka:
+        condition: service_healthy
+      db_psql:
+        condition: service_healthy
+    networks:
+      - app_network
+
+  consumer_all_messages:
+    build: ./consumer_all_messages
+    container_name: consumer_all_messages
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - app_network
+
+
+networks:
+  app_network:
+    driver: bridge
